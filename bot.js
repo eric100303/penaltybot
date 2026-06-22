@@ -9,7 +9,7 @@ const client = new Client({
   ] 
 });
 
-// 💾 복잡한 설정 없이 작동하는 깔끔한 메모리 저장소
+// 💾 아무런 권한이 필요 없는 가장 안전한 순수 메모리 저장소
 const scoreDb = new Map();
 
 client.once('ready', async () => {
