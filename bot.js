@@ -1,7 +1,37 @@
 import "jsr:@std/dotenv/load";
+import { connect } from "https://deno.land/x/redis@v0.34.0/mod.ts"; // Redis 드라이버 추가
 
 const DISCORD_TOKEN = Deno.env.get("DISCORD_TOKEN");
-const scoreDb = new Map();
+const REDIS_URL = Deno.env.get("REDIS_URL"); // 레일웨이가 자동으로 넣어줄 DB 주소
+
+// 1. Redis 연결 설정
+let redis;
+try {
+    if (REDIS_URL) {
+        redis = await connect({ url: REDIS_URL });
+        console.log("💾 Redis DB 연결 완료!");
+    } else {
+        console.log("⚠️ REDIS_URL이 없어 로컬 메모리 모드로 동작합니다.");
+    }
+} catch (e) {
+    console.error("❌ Redis 연결 실패:", e);
+}
+
+// 헬퍼 함수: DB에서 유저 데이터 가져오기
+async function getUser(userId) {
+    if (redis) {
+        const data = await redis.get(`user:${userId}`);
+        return data ? JSON.parse(data) : { penaltyPoints: 0, rewardPoints: 0, records: [] };
+    }
+    return { penaltyPoints: 0, rewardPoints: 0, records: [] };
+}
+
+// 헬퍼 함수: DB에 유저 데이터 저장하기
+async function saveUser(userId, userData) {
+    if (redis) {
+        await redis.set(`user:${userId}`, JSON.stringify(userData));
+    }
+}
 
 let socket;
 let sequence = null;
@@ -37,10 +67,9 @@ function connectGateway() {
 
         if (t === "MESSAGE_CREATE") {
             const { content, author, channel_id } = d;
-
             if (author.bot) return;
 
-            // 1. !벌점 유저ID/멘션 점수 사유
+            // 1. !벌점
             if (content.startsWith("!벌점")) {
                 const parts = content.split(" ");
                 if (parts.length < 4) {
@@ -53,10 +82,11 @@ function connectGateway() {
 
                 if (isNaN(points)) return;
 
-                initUser(targetId);
-                const userData = scoreDb.get(targetId);
+                // DB에서 데이터 로드 후 수정 및 저장
+                const userData = await getUser(targetId);
                 userData.penaltyPoints += points;
                 userData.records.push({ type: "벌점", reason, points });
+                await saveUser(targetId, userData);
 
                 const currentNet = userData.rewardPoints - userData.penaltyPoints;
                 const sign = points > 0 ? `+${points}` : `${points}`;
@@ -66,7 +96,7 @@ function connectGateway() {
                 );
             }
 
-            // 2. !상점 유저ID/멘션 점수 사유
+            // 2. !상점
             if (content.startsWith("!상점")) {
                 const parts = content.split(" ");
                 if (parts.length < 4) {
@@ -79,10 +109,11 @@ function connectGateway() {
 
                 if (isNaN(points)) return;
 
-                initUser(targetId);
-                const userData = scoreDb.get(targetId);
+                // DB에서 데이터 로드 후 수정 및 저장
+                const userData = await getUser(targetId);
                 userData.rewardPoints += points;
                 userData.records.push({ type: "상점", reason, points });
+                await saveUser(targetId, userData);
 
                 const currentNet = userData.rewardPoints - userData.penaltyPoints;
                 const sign = points > 0 ? `+${points}` : `${points}`;
@@ -92,7 +123,7 @@ function connectGateway() {
                 );
             }
 
-            // 3. !통계 유저ID/멘션
+            // 3. !통계
             if (content.startsWith("!통계")) {
                 const parts = content.split(" ");
                 if (parts.length < 2) {
@@ -101,8 +132,7 @@ function connectGateway() {
                 }
                 const targetId = parts[1].replace(/[^0-9]/g, "");
 
-                initUser(targetId);
-                const userData = scoreDb.get(targetId);
+                const userData = await getUser(targetId);
 
                 if (userData.records.length === 0) {
                     await sendMessage(channel_id, `<@${targetId}>님은 기록된 상/벌점 내역이 없습니다! 😇`);
@@ -131,32 +161,5 @@ function connectGateway() {
     };
 }
 
-function initUser(userId) {
-    if (!scoreDb.has(userId)) {
-        scoreDb.set(userId, { penaltyPoints: 0, rewardPoints: 0, records: [] });
-    }
-}
-
-async function sendMessage(channelId, text) {
-    await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-        method: "POST",
-        headers: { "Authorization": `Bot ${DISCORD_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ content: text })
-    });
-}
-
-async function sendEmbed(channelId, title, color, description) {
-    await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-        method: "POST",
-        headers: { "Authorization": `Bot ${DISCORD_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-            embeds: [{ title, description, color: parseInt(color.replace("#", ""), 16) }]
-        })
-    });
-}
-
-Deno.serve((_req) => {
-  return new Response("OK", { status: 200 });
-});
-
-connectGateway();
+// 기존 HTTP 서버 구동 (Railway가 포트를 열어서 봇이 살아있는지 체크하는 용도)
+Deno.
