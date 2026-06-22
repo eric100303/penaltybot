@@ -9,14 +9,13 @@ const client = new Client({
   ] 
 });
 
-// 💾 아무런 권한이 필요 없는 가장 안전한 순수 메모리 저장소
+// 💾 순수 메모리 저장소
 const scoreDb = new Map();
 
 client.once('ready', async () => {
     console.log(`🤖 ${client.user.tag} 상/벌점 통합 관리 시스템 준비 완료`);
 
     const commands = [
-        // 1. 벌점 부여 (차감 가능)
         new SlashCommandBuilder()
             .setName('벌점부여')
             .setDescription('유저에게 벌점을 부여하거나 차감합니다. (음수 입력 시 차감)')
@@ -25,7 +24,6 @@ client.once('ready', async () => {
             .addIntegerOption(option => option.setName('점수').setDescription('부여할 점수 (지우려면 마이너스 입력, 예: -3)').setRequired(true))
             .addStringOption(option => option.setName('사유').setDescription('사유 또는 수정 이유').setRequired(true)),
             
-        // 2. 상점 부여 (차감 가능)
         new SlashCommandBuilder()
             .setName('상점부여')
             .setDescription('유저에게 상점을 부여하거나 차감합니다. (음수 입력 시 차감)')
@@ -34,7 +32,6 @@ client.once('ready', async () => {
             .addIntegerOption(option => option.setName('점수').setDescription('부여할 점수 (지우려면 마이너스 입력, 예: -5)').setRequired(true))
             .addStringOption(option => option.setName('사유').setDescription('사유 또는 수정 이유').setRequired(true)),
                 
-        // 3. 통합 점수 통계
         new SlashCommandBuilder()
             .setName('점수통계')
             .setDescription('특정 유저의 상/벌점 내역과 최종 점수를 확인합니다. (관리자 전용)')
@@ -53,9 +50,16 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    // ⏱️ [핵심] 디스코드가 3초 뒤에 삐지지 않도록 먼저 "생각 중..." 상태로 만들기
+    try {
+        await interaction.deferReply();
+    } catch (e) {
+        console.error("deferReply 실패:", e);
+        return;
+    }
+
     const targetUser = interaction.options.getUser('유저');
     
-    // 데이터 유무 확인 및 초기화
     if (!scoreDb.has(targetUser.id)) {
         scoreDb.set(targetUser.id, { penaltyPoints: 0, rewardPoints: 0, records: [] });
     }
@@ -83,7 +87,8 @@ client.on('interactionCreate', async interaction => {
                 { name: '누적 점수 현황', value: `상점: ${userData.rewardPoints}점 | 벌점: ${userData.penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
             );
 
-        await interaction.reply({ embeds: [embed] });
+        // deferReply를 썼을 때는 reply 대신 editReply를 써야 해!
+        await interaction.editReply({ embeds: [embed] });
     }
 
     // --- 상점 부여/차감 ---
@@ -108,13 +113,13 @@ client.on('interactionCreate', async interaction => {
                 { name: '누적 점수 현황', value: `상점: ${userData.rewardPoints}점 | 벌점: ${userData.penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
             );
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 
     // --- 통합 점수 통계 ---
     if (interaction.commandName === '점수통계') {
         if (userData.records.length === 0) {
-            await interaction.reply({ content: `<@${targetUser.id}>님은 기록된 상/벌점 내역이 없습니다! 😇`, ephemeral: true });
+            await interaction.editReply({ content: `<@${targetUser.id}>님은 기록된 상/벌점 내역이 없습니다! 😇` });
             return;
         }
 
@@ -137,13 +142,12 @@ client.on('interactionCreate', async interaction => {
             .setColor(0x3498DB)
             .setDescription(description);
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 });
 
-// 서버 웹 체크용
 Deno.serve((_req) => {
-  return new Response("Penalty & Reward Bot is running successfully!", { status: 200 });
+  return new Response("Penalty & Reward Bot is running perfectly!", { status: 200 });
 });
 
 client.login(DISCORD_TOKEN);
