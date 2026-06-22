@@ -33,19 +33,19 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder()
             .setName('벌점부여')
-            .setDescription('유저에게 벌점을 부여합니다. (관리자 전용)')
+            .setDescription('유저에게 벌점을 부여하거나 차감합니다. (음수 입력 시 차감)')
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-            .addUserOption(option => option.setName('유저').setDescription('벌점을 받을 유저').setRequired(true))
-            .addIntegerOption(option => option.setName('점수').setDescription('부여할 벌점').setRequired(true))
-            .addStringOption(option => option.setName('사유').setDescription('벌점 사유').setRequired(true)),
+            .addUserOption(option => option.setName('유저').setDescription('벌점을 조절할 유저').setRequired(true))
+            .addIntegerOption(option => option.setName('점수').setDescription('부여할 점수 (지우려면 마이너스 입력, 예: -3)').setRequired(true))
+            .addStringOption(option => option.setName('사유').setDescription('사유 또는 수정 이유').setRequired(true)),
             
         new SlashCommandBuilder()
             .setName('상점부여')
-            .setDescription('유저에게 상점을 부여합니다. (관리자 전용)')
+            .setDescription('유저에게 상점을 부여하거나 차감합니다. (음수 입력 시 차감)')
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-            .addUserOption(option => option.setName('유저').setDescription('상점을 받을 유저').setRequired(true))
-            .addIntegerOption(option => option.setName('점수').setDescription('부여할 상점').setRequired(true))
-            .addStringOption(option => option.setName('사유').setDescription('상점 사유').setRequired(true)),
+            .addUserOption(option => option.setName('유저').setDescription('상점을 조절할 유저').setRequired(true))
+            .addIntegerOption(option => option.setName('점수').setDescription('부여할 점수 (지우려면 마이너스 입력, 예: -5)').setRequired(true))
+            .addStringOption(option => option.setName('사유').setDescription('사유 또는 수정 이유').setRequired(true)),
                 
         new SlashCommandBuilder()
             .setName('점수통계')
@@ -71,11 +71,6 @@ client.on('interactionCreate', async interaction => {
         if (!db[userId]) {
             db[userId] = { penaltyPoints: 0, rewardPoints: 0, records: [] };
         }
-        if (db[userId].totalPoints !== undefined && db[userId].penaltyPoints === undefined) {
-            db[userId].penaltyPoints = db[userId].totalPoints;
-            db[userId].rewardPoints = 0;
-            delete db[userId].totalPoints;
-        }
     };
 
     if (interaction.commandName === '벌점부여') {
@@ -86,18 +81,21 @@ client.on('interactionCreate', async interaction => {
         initUser(targetUser.id);
         
         db[targetUser.id].penaltyPoints += points;
-        db[targetUser.id].records.push({ type: '벌점', reason, points });
+        
+        const typeStr = points < 0 ? '벌점 차감' : '벌점';
+        db[targetUser.id].records.push({ type: typeStr, reason, points });
 
         await saveData(db);
 
         const currentNet = db[targetUser.id].rewardPoints - db[targetUser.id].penaltyPoints;
+        const sign = points > 0 ? `+${points}` : `${points}`;
 
         const embed = new EmbedBuilder()
-            .setTitle('🚨 벌점 부여 알림')
-            .setColor(0xFF0000)
+            .setTitle(points < 0 ? '⚙️ 벌점 수정(차감) 알림' : '🚨 벌점 부여 알림')
+            .setColor(points < 0 ? 0x7F8C8D : 0xFF0000)
             .addFields(
                 { name: '대상', value: `<@${targetUser.id}>`, inline: true },
-                { name: '부여된 벌점', value: `+${points}점`, inline: true },
+                { name: '변동 점수', value: `${sign}점`, inline: true },
                 { name: '사유', value: reason, inline: false },
                 { name: '누적 점수 현황', value: `상점: ${db[targetUser.id].rewardPoints}점 | 벌점: ${db[targetUser.id].penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
             );
@@ -113,18 +111,21 @@ client.on('interactionCreate', async interaction => {
         initUser(targetUser.id);
         
         db[targetUser.id].rewardPoints += points;
-        db[targetUser.id].records.push({ type: '상점', reason, points });
+        
+        const typeStr = points < 0 ? '상점 차감' : '상점';
+        db[targetUser.id].records.push({ type: typeStr, reason, points });
 
         await saveData(db);
 
         const currentNet = db[targetUser.id].rewardPoints - db[targetUser.id].penaltyPoints;
+        const sign = points > 0 ? `+${points}` : `${points}`;
 
         const embed = new EmbedBuilder()
-            .setTitle('✨ 상점 부여 알림')
-            .setColor(0x00FF00)
+            .setTitle(points < 0 ? '⚙️ 상점 수정(차감) 알림' : '✨ 상점 부여 알림')
+            .setColor(points < 0 ? 0x7F8C8D : 0x00FF00)
             .addFields(
                 { name: '대상', value: `<@${targetUser.id}>`, inline: true },
-                { name: '부여된 상점', value: `+${points}점`, inline: true },
+                { name: '변동 점수', value: `${sign}점`, inline: true },
                 { name: '사유', value: reason, inline: false },
                 { name: '누적 점수 현황', value: `상점: ${db[targetUser.id].rewardPoints}점 | 벌점: ${db[targetUser.id].penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
             );
@@ -146,11 +147,15 @@ client.on('interactionCreate', async interaction => {
         const netPoints = userData.rewardPoints - userData.penaltyPoints;
         let description = `**상점: ${userData.rewardPoints}점 | 벌점: ${userData.penaltyPoints}점**\n`;
         description += `**🔥 최종 합산 점수: ${netPoints}점**\n\n**[최근 상/벌점 내역]**\n`;
-
+        
         const recentRecords = userData.records.slice(-5).reverse();
         recentRecords.forEach((record, idx) => {
-            const icon = record.type === '상점' ? '🍏' : '🍎';
-            description += `${idx + 1}. ${icon} [${record.type}] ${record.reason} (+${record.points}점)\n`;
+            let icon = '🍏';
+            if (record.type.includes('벌점')) icon = '🍎';
+            if (record.type.includes('차감')) icon = '🔧';
+            
+            const sign = record.points > 0 ? `+${record.points}` : `${record.points}`;
+            description += `${idx + 1}. ${icon} [${record.type}] ${record.reason} (${sign}점)\n`;
         });
 
         const embed = new EmbedBuilder()
