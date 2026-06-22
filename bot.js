@@ -2,7 +2,6 @@ import "jsr:@std/dotenv/load";
 import { Client, GatewayIntentBits, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } from "npm:discord.js";
 
 const DISCORD_TOKEN = Deno.env.get("DISCORD_TOKEN");
-const DB_FILE = "./penalty_db.json";
 
 const client = new Client({ 
   intents: [
@@ -10,22 +9,7 @@ const client = new Client({
   ] 
 });
 
-async function loadData() {
-    try {
-        const text = await Deno.readTextFile(DB_FILE);
-        return JSON.parse(text);
-    } catch (_e) {
-        return {};
-    }
-}
-
-async function saveData(data) {
-    try {
-        await Deno.writeTextFile(DB_FILE, JSON.stringify(data, null, 2));
-    } catch (e) {
-        console.error("데이터 저장 실패:", e);
-    }
-}
+const kv = await Deno.openKv();
 
 client.once('ready', async () => {
     console.log(`🤖 ${client.user.tag} 상/벌점 통합 관리 시스템 준비 완료`);
@@ -41,7 +25,7 @@ client.once('ready', async () => {
             
         new SlashCommandBuilder()
             .setName('상점부여')
-            .setDescription('유저에게 상점을 부여하거나 차감합니다. (음수 입력 시 차감)')
+            .setDescription('유저에게 상점을 부여거나 차감합니다. (음수 입력 시 차감)')
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
             .addUserOption(option => option.setName('유저').setDescription('상점을 조절할 유저').setRequired(true))
             .addIntegerOption(option => option.setName('점수').setDescription('부여할 점수 (지우려면 마이너스 입력, 예: -5)').setRequired(true))
@@ -65,29 +49,27 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    const db = await loadData();
+    const targetUser = interaction.options.getUser('유저');
+    
+    const kvRes = await kv.get(["scores", targetUser.id]);
+    let userData = kvRes.value;
 
-    const initUser = (userId) => {
-        if (!db[userId]) {
-            db[userId] = { penaltyPoints: 0, rewardPoints: 0, records: [] };
-        }
-    };
+    if (!userData) {
+        userData = { penaltyPoints: 0, rewardPoints: 0, records: [] };
+    }
 
+    // --- 벌점 부여/차감 명령어 ---
     if (interaction.commandName === '벌점부여') {
-        const targetUser = interaction.options.getUser('유저');
         const points = interaction.options.getInteger('점수');
         const reason = interaction.options.getString('사유');
 
-        initUser(targetUser.id);
-        
-        db[targetUser.id].penaltyPoints += points;
-        
+        userData.penaltyPoints += points;
         const typeStr = points < 0 ? '벌점 차감' : '벌점';
-        db[targetUser.id].records.push({ type: typeStr, reason, points });
+        userData.records.push({ type: typeStr, reason, points });
 
-        await saveData(db);
+        await kv.set(["scores", targetUser.id], userData);
 
-        const currentNet = db[targetUser.id].rewardPoints - db[targetUser.id].penaltyPoints;
+        const currentNet = userData.rewardPoints - userData.penaltyPoints;
         const sign = points > 0 ? `+${points}` : `${points}`;
 
         const embed = new EmbedBuilder()
@@ -97,27 +79,24 @@ client.on('interactionCreate', async interaction => {
                 { name: '대상', value: `<@${targetUser.id}>`, inline: true },
                 { name: '변동 점수', value: `${sign}점`, inline: true },
                 { name: '사유', value: reason, inline: false },
-                { name: '누적 점수 현황', value: `상점: ${db[targetUser.id].rewardPoints}점 | 벌점: ${db[targetUser.id].penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
+                { name: '누적 점수 현황', value: `상점: ${userData.rewardPoints}점 | 벌점: ${userData.penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
             );
 
         await interaction.reply({ embeds: [embed] });
     }
 
+    // --- 상점 부여/차감 명령어 ---
     if (interaction.commandName === '상점부여') {
-        const targetUser = interaction.options.getUser('유저');
         const points = interaction.options.getInteger('점수');
         const reason = interaction.options.getString('사유');
 
-        initUser(targetUser.id);
-        
-        db[targetUser.id].rewardPoints += points;
-        
+        userData.rewardPoints += points;
         const typeStr = points < 0 ? '상점 차감' : '상점';
-        db[targetUser.id].records.push({ type: typeStr, reason, points });
+        userData.records.push({ type: typeStr, reason, points });
 
-        await saveData(db);
+        await kv.set(["scores", targetUser.id], userData);
 
-        const currentNet = db[targetUser.id].rewardPoints - db[targetUser.id].penaltyPoints;
+        const currentNet = userData.rewardPoints - userData.penaltyPoints;
         const sign = points > 0 ? `+${points}` : `${points}`;
 
         const embed = new EmbedBuilder()
@@ -127,48 +106,13 @@ client.on('interactionCreate', async interaction => {
                 { name: '대상', value: `<@${targetUser.id}>`, inline: true },
                 { name: '변동 점수', value: `${sign}점`, inline: true },
                 { name: '사유', value: reason, inline: false },
-                { name: '누적 점수 현황', value: `상점: ${db[targetUser.id].rewardPoints}점 | 벌점: ${db[targetUser.id].penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
+                { name: '누적 점수 현황', value: `상점: ${userData.rewardPoints}점 | 벌점: ${userData.penaltyPoints}점\n**최종 합산: ${currentNet}점**`, inline: false }
             );
 
         await interaction.reply({ embeds: [embed] });
     }
 
+    // --- 통합 점수 통계 명령어 ---
     if (interaction.commandName === '점수통계') {
-        const targetUser = interaction.options.getUser('유저');
-        initUser(targetUser.id);
-        
-        const userData = db[targetUser.id];
-
         if (userData.records.length === 0) {
-            await interaction.reply({ content: `<@${targetUser.id}>님은 기록된 상/벌점 내역이 없습니다! 😇`, ephemeral: true });
-            return;
-        }
-
-        const netPoints = userData.rewardPoints - userData.penaltyPoints;
-        let description = `**상점: ${userData.rewardPoints}점 | 벌점: ${userData.penaltyPoints}점**\n`;
-        description += `**🔥 최종 합산 점수: ${netPoints}점**\n\n**[최근 상/벌점 내역]**\n`;
-        
-        const recentRecords = userData.records.slice(-5).reverse();
-        recentRecords.forEach((record, idx) => {
-            let icon = '🍏';
-            if (record.type.includes('벌점')) icon = '🍎';
-            if (record.type.includes('차감')) icon = '🔧';
-            
-            const sign = record.points > 0 ? `+${record.points}` : `${record.points}`;
-            description += `${idx + 1}. ${icon} [${record.type}] ${record.reason} (${sign}점)\n`;
-        });
-
-        const embed = new EmbedBuilder()
-            .setTitle(`📊 ${targetUser.username}님의 상/벌점 통계`)
-            .setColor(0x3498DB)
-            .setDescription(description);
-
-        await interaction.reply({ embeds: [embed] });
-    }
-});
-
-Deno.serve((_req) => {
-  return new Response("Penalty & Reward Bot is running safely!", { status: 200 });
-});
-
-client.login(DISCORD_TOKEN);
+            await interaction.reply({ content: `<@${targetUser.id}>님은
