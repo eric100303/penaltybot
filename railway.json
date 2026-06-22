@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "deno run --allow-net --allow-env --allow-read main.ts",
+    "restartPolicyType": "ON_FAILURE"
+  }
+}
