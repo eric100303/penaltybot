@@ -3,22 +3,19 @@ import "jsr:@std/dotenv/load";
 const DISCORD_TOKEN = Deno.env.get("DISCORD_TOKEN");
 const scoreDb = new Map();
 
-// 🤖 디스코드 게이트웨이(통신망) 직접 연결용 설정
 let socket;
 let sequence = null;
-let sessionId = null;
 
 function connectGateway() {
     socket = new WebSocket("wss://gateway.discord.gg/?v=10&encoding=json");
 
     socket.onopen = () => {
         console.log("🔌 디스코드 게이트웨이 직접 연결 시작!");
-        // 봇 인증 및 로그인 요청 수동 전송
         const identifyPayload = {
             op: 2,
             d: {
                 token: DISCORD_TOKEN,
-                intents: 33280, // Guilds + Guild Messages + Message Content 통신망 강제 개방
+                intents: 33280, 
                 properties: { os: "linux", browser: "deno", device: "deno" }
             }
         };
@@ -31,7 +28,6 @@ function connectGateway() {
 
         if (s) sequence = s;
 
-        // Heartbeat 주기적 신호 처리 (생존 신고)
         if (op === 10) {
             const interval = d.heartbeat_interval;
             setInterval(() => {
@@ -39,21 +35,19 @@ function connectGateway() {
             }, interval);
         }
 
-        // 💬 채팅 메시지가 들어왔을 때 처리
         if (t === "MESSAGE_CREATE") {
-            const { content, author, channel_id, id } = d;
+            const { content, author, channel_id } = d;
 
-            // 봇이 쓴 글은 무시
             if (author.bot) return;
 
-            // 1. !벌점 유저ID 점수 사유
+            // 1. !벌점 유저ID/멘션 점수 사유
             if (content.startsWith("!벌점")) {
                 const parts = content.split(" ");
                 if (parts.length < 4) {
-                    await sendMessage(channel_id, "❌ 형식을 맞춰줘! 사용법: `!벌점 유저ID 점수 사유` (예: `!벌점 12345 3 지각`)");
+                    await sendMessage(channel_id, "❌ 사용법: `!벌점 @유저멘션 점수 사유` (예: `!벌점 @홍길동 3 지각`)");
                     return;
                 }
-                const targetId = parts[1].replace(/[^0-9]/g, ""); // 멘션이나 ID에서 숫자만 추출
+                const targetId = parts[1].replace(/[^0-9]/g, ""); 
                 const points = parseInt(parts[2]);
                 const reason = parts.slice(3).join(" ");
 
@@ -72,11 +66,11 @@ function connectGateway() {
                 );
             }
 
-            // 2. !상점 유저ID 점수 사유
+            // 2. !상점 유저ID/멘션 점수 사유
             if (content.startsWith("!상점")) {
                 const parts = content.split(" ");
                 if (parts.length < 4) {
-                    await sendMessage(channel_id, "❌ 형식을 맞춰줘! 사용법: `!상점 유저ID 점수 사유` (예: `!상점 12345 5 과제제출`)");
+                    await sendMessage(channel_id, "❌ 사용법: `!상점 @유저멘션 점수 사유` (예: `!상점 @홍길동 5 과제`)");
                     return;
                 }
                 const targetId = parts[1].replace(/[^0-9]/g, "");
@@ -98,11 +92,11 @@ function connectGateway() {
                 );
             }
 
-            // 3. !통계 유저ID
+            // 3. !통계 유저ID/멘션
             if (content.startsWith("!통계")) {
                 const parts = content.split(" ");
                 if (parts.length < 2) {
-                    await sendMessage(channel_id, "❌ 사용법: `!통계 유저ID` 또는 `!통계 @유저멘션` ");
+                    await sendMessage(channel_id, "❌ 사용법: `!통계 @유저멘션` ");
                     return;
                 }
                 const targetId = parts[1].replace(/[^0-9]/g, "");
@@ -133,7 +127,6 @@ function connectGateway() {
     };
 
     socket.onclose = () => {
-        console.log("❌ 연결 끊김, 1초 뒤 재연결 시도...");
         setTimeout(connectGateway, 1000);
     };
 }
@@ -144,9 +137,26 @@ function initUser(userId) {
     }
 }
 
-// 📨 순수 HTTP 요청으로 메시지 쏘기 (라이브러리 미사용)
 async function sendMessage(channelId, text) {
     await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
         method: "POST",
         headers: { "Authorization": `Bot ${DISCORD_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ content
+        body: JSON.stringify({ content: text })
+    });
+}
+
+async function sendEmbed(channelId, title, color, description) {
+    await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+        method: "POST",
+        headers: { "Authorization": `Bot ${DISCORD_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+            embeds: [{ title, description, color: parseInt(color.replace("#", ""), 16) }]
+        })
+    });
+}
+
+Deno.serve((_req) => {
+  return new Response("OK", { status: 200 });
+});
+
+connectGateway();
